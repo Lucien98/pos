@@ -7,6 +7,10 @@
 #include "string.h"
 #include "secp256k1-vrf.h"
 #include "util.h"
+#include "hash_impl.h"
+#include "testrand_impl.h"
+#include "scalar_4x64_impl.h"
+
 unsigned char HexToInt(int h){
   CHECK( (h>='0' && h<='9') ||  (h>='a' && h<='f') ||  (h>='A' && h<='F') );
   h += 9*(1&(h>>6));
@@ -29,26 +33,6 @@ void print_hex(char *desc, unsigned char *data, int size){
     printf("%02X", data[i]);
   }
   puts("");
-}
-
-int HexStrTobyte(char *str, unsigned char *out, unsigned int *outlen)
-{
-	char *p = str;
-	char high = 0, low = 0;
-	int tmplen = strlen(p), cnt = 0;
-	tmplen = strlen(p);
-	while(cnt < (tmplen / 2))
-	{
-		high = ((*p > '9') && ((*p <= 'F') || (*p <= 'f'))) ? *p - 48 - 7 : *p - 48;
-		low = (*(++ p) > '9' && ((*p <= 'F') || (*p <= 'f'))) ? *(p) - 48 - 7 : *(p) - 48;
-		out[cnt] = ((high & 0x0f) << 4 | (low & 0x0f));
-		p ++;
-		cnt ++;
-	}
-	if(tmplen % 2 != 0) out[cnt] = ((*p > '9') && ((*p <= 'F') || (*p <= 'f'))) ? *p - 48 - 7 : *p - 48;
-
-	if(outlen != NULL) *outlen = tmplen / 2 + tmplen % 2;
-	return tmplen / 2 + tmplen % 2;
 }
 
 
@@ -74,4 +58,66 @@ int  byteToHexStr(unsigned char byte_arr[],int arr_len, char* HexStr){
 	}
 	HexStr[index] = '\0';
 	return 0 ;
+}
+
+
+void get_hash(char *input, char *output){
+    unsigned char out[32];
+    secp256k1_sha256 hasher;
+    secp256k1_sha256_initialize(&hasher);
+    secp256k1_sha256_write(&hasher, (const unsigned char*)(input), strlen(input));
+    secp256k1_sha256_finalize(&hasher, out);
+    //printf("strlen(inputs[%d])=%d\nout=%s\n", i, strlen(inputs[i]), out);
+    //CHECK(memcmp(out, outputs[i], 32) == 0);
+    if (strlen(input) > 0) {
+        int split = secp256k1_rand_int(strlen(input));
+        //printf("split=%d\n", split);
+        secp256k1_sha256_initialize(&hasher);
+        secp256k1_sha256_write(&hasher, (const unsigned char*)(input), split);
+        secp256k1_sha256_write(&hasher, (const unsigned char*)(input + split), strlen(input) - split);
+        secp256k1_sha256_finalize(&hasher, out);
+        byteToHexStr(out, 32, output);
+        // print_hex("out", out, 32);
+        // char outputsi[9];
+        // sprintf(outputsi, "outputs%d", i );
+        // outputsi[8] = '\0';
+        // print_hex(outputsi, outputs[i], 32);
+        //CHECK(memcmp(out, outputs[i], 32) == 0);
+	}
+	output[64] = '\0';
+}
+
+void sign(unsigned char message[32], char hex_signature[149], unsigned char sk[32]){
+	secp256k1_ecdsa_signature signature;
+	secp256k1_pubkey pubkey;
+	secp256k1_context *ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN | SECP256K1_CONTEXT_VERIFY);
+	CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey, sk) == 1);
+	CHECK(secp256k1_ecdsa_sign(ctx, &signature, message, sk, NULL, NULL) == 1);
+	CHECK(secp256k1_ecdsa_verify(ctx, &signature, message, &pubkey) == 1);
+	
+	//method 1: serialize signature
+	byteToHexStr(signature.data, 64, hex_signature);
+	unsigned char data[64];
+	from_hex(hex_signature, 128, data);
+	memset(signature.data, '0', 64);
+	memcpy(signature.data, data, 64);
+	CHECK(secp256k1_ecdsa_verify(ctx, &signature, message, &pubkey) == 1);
+	
+	//method 2: serialize signature
+	/*unsigned char sig[75];
+	size_t siglen = 74;
+
+	byteToHexStr(sig, 74, hex_signature);
+	hex_signature[148] = '\0';
+	CHECK(secp256k1_ecdsa_signature_serialize_der(ctx, sig, &siglen, &signature) == 1);
+	CHECK(secp256k1_ecdsa_signature_parse_der(ctx, &signature, sig, siglen) == 1);
+    CHECK(secp256k1_ecdsa_verify(ctx, &signature, message, &pubkey) == 1);*/
+}
+
+void get_merkle_root(char *input, char *output){
+	int i =0;
+	for(i=0; i<64; i++){
+		output[i] = '0';
+	}
+	output[64] = '\0';
 }

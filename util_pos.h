@@ -7,4 +7,6 @@ void from_hex(char *source, int size, unsigned char *dest);
 void print_hex(char *desc, unsigned char *data, int size);
 int HexStrTobyte(char *str, unsigned char *out, unsigned int *outlen);
 int byteToHexStr(unsigned char byte_arr[],int arr_len, char* HexStr);
+void get_hash(char *input, char *output);
+void get_merkle_root(char *input, char *output);
 #endif

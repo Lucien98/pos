@@ -6,15 +6,24 @@ sudo ./pos
 #include "util.h"
 #include "testrand_impl.h"
 
+#include "mysql.h"
+
 #include <stdlib.h>  
 #include <stdio.h>  
 #include <malloc.h>
 #include <string.h>
+#include <time.h>
 
 #include "util_pos.h"
 #include "util_mysql.h"
 
 #define NUM_STKHLD 5000
+
+#define MERKLE_ROOT_LEN 64 
+#define SIGNATURE_LEN 
+#define TX_LEN 100
+#define NONCE "A6E3C57DD01ABE90086538398355DD4C3B17AA873382B0F24D6129493D8AAD60"
+#define DIFFICULTY "0D1B71758E2196800000000000000000000000000000000000000000000000" 
 void generate_stakeholder(void){
 	secp256k1_context *ctx;
 	unsigned char seckey[32];
@@ -35,15 +44,350 @@ void generate_stakeholder(void){
 		byteToHexStr(seckey, 32, hex_seckey);
 		byteToHexStr(pk, 33, hex_pk);
 		
-		sprintf(sql_gen_stkhld, "%s(%d, \"%s\", \"%s\"), ", sql_gen_stkhld, i, hex_seckey, hex_pk);
+		sprintf(sql_gen_stkhld, "%s(%d, \"%s\", \"%s\"), ", sql_gen_stkhld, i, hex_pk, hex_seckey);
 		
 	}
 	sql_gen_stkhld[strlen(sql_gen_stkhld)-2] = '\0';
 	insert_sql(sql_gen_stkhld);
 	free(sql_gen_stkhld);
 }
+//INSERT INTO `block` VALUES ('1', 'prehash', 'vrf_pk',
+// 'vrf_hash', 'vrf_proof', 'merkle_root', 'signatue', 'tx', 'hash')
+
+/*block_header hash, signature, merkle_root都是可以计算的 */
+void insert_block(int height, unsigned char prevhash[], unsigned char vrf_pk[], \
+	unsigned char vrf_hash[], unsigned char vrf_proof[], char tx[]){
+	char *sql = (char *) malloc(10240);
+	char hash[65]; 
+	unsigned char signature[149];
+	char merkle_root[65];
+	get_merkle_root(tx, merkle_root);
+	char *blk_hdr = (char *)malloc(1024);
+	sprintf(blk_hdr, "%d%s%s%s%s%s", height, prevhash, vrf_pk, vrf_hash, vrf_proof, merkle_root);
+	get_hash(blk_hdr, hash);
+
+	//判断是否是genesis　block
+	char zero_pk[67];
+	memset(zero_pk, '0', 66);
+	zero_pk[66] = '\0';
+	//如果不是genesis block，则生成对区块哈希的签名
+	if(memcmp(vrf_pk, zero_pk, 66) != 0){
+		char hex_sk[65];
+		unsigned char seckey[32];
+		get_stkhld_sk(vrf_pk, hex_sk);
+		from_hex(hex_sk, 64, seckey);
+
+		unsigned char message[32];
+		from_hex(hash, 64, message);
+		sign(message, signature, seckey);
+
+	}
+
+
+	sprintf(sql, "insert into block values(%d, \"%s\", \"%s\", \"%s\", \"%s\", \"%s\", \"%s\", \"%s\", \"%s\")",
+		height, prevhash, vrf_pk, vrf_hash, vrf_proof, merkle_root, signature, tx, hash);
+	//printf("%s\n", sql);
+	insert_sql(sql);
+	free(blk_hdr);
+	free(sql);
+}
+
+void generate_genblk(){
+	int height = 0;
+	char prevhash[65]={'0'}, vrf_proof[163]={'0'}, \
+		vrf_pk[67]={'0'}, vrf_hash[65]={'0'};
+	char *tx="transactions";
+	memset(prevhash , '0', 64);
+	memset(vrf_proof, '0', 162);
+	memset(vrf_pk, '0', 66);
+	memset(vrf_hash, '0', 64);
+	prevhash[64] = vrf_proof[162] = vrf_pk[66] = vrf_hash[64] = '\0';
+	//printf("%s\n", vrf_pk);
+	insert_block(height, prevhash, vrf_pk, vrf_hash, vrf_proof,tx);
+	//printf("prevhash=%s\nvrf_proof", prevhash);
+
+}
+
+
+int mulblk_flag = 0;//一个slot出现多个合法区块的标记
+
+/*进行vrf的计算，不如将上一区块的hash作为随机数种子？*/
+void leader_election(int slot){
+	
+
+	mulblk_flag = 0;
+	char *nonce = "A6E3C57DD01ABE90086538398355DD4C3B17AA873382B0F24D6129493D8AAD60";
+	char *difficulty = "000D1B71758E2196800000000000000000000000000000000000000000000000";
+	char *msg;
+	int msglen;
+	msg = (char *)malloc(100);
+	sprintf(msg, "%s%.6X", nonce, slot);
+	int i = 0;
+	
+	unsigned char proof[81];
+	unsigned char seckey[32];
+	unsigned char output[32];
+	secp256k1_pubkey pubkey;
+	unsigned char pk[33];
+	size_t pklen = 33;
+	secp256k1_context *sender = secp256k1_context_create(SECP256K1_CONTEXT_SIGN | SECP256K1_CONTEXT_VERIFY);
+	msglen = strlen(msg);
+	char *sql = (char *)malloc(100);
+	sprintf(sql,"select sk from stakeholder");
+	MYSQL_RES  *res_ptr;
+	select_sql(sql, &res_ptr);
+	if(res_ptr){
+		for(int i=0; i<NUM_STKHLD; i++){
+			MYSQL_ROW row = mysql_fetch_row(res_ptr);//row[0] is the sk string
+			//covert string version hex to unsigned char version hex(type: unsigned char )
+			from_hex(row[0], 64, seckey);
+			CHECK(secp256k1_ec_pubkey_create(sender, &pubkey, seckey) == 1);
+			CHECK(secp256k1_ec_pubkey_serialize(sender, pk, &pklen, &pubkey, SECP256K1_EC_COMPRESSED) == 1);
+			CHECK(secp256k1_vrf_prove(proof, seckey, &pubkey, msg, msglen) == 1);
+			secp256k1_vrf_proof_to_hash(output, proof);
+			char hex_output[65];
+			byteToHexStr(output, 32, hex_output);
+			
+			CHECK(secp256k1_vrf_verify(output, proof, pk, msg, msglen) == 1);
+
+			if(strcmp(hex_output, difficulty)<0 && mulblk_flag==0){
+				//printf("vrf verify success, converting data to hex_string\n");
+				mulblk_flag = 1;
+				//printf("\n\n\n\n\n终于可以产生一个区块了\n\n\n\n\n\n\n\n");
+				//get prevhash
+				//sql, "select hash from block where height = (select max(height) from block)";
+				sprintf(sql, "select hash from block where height = (select max(height) from block)");
+				MYSQL_RES *res_hash;
+				select_sql(sql, &res_hash);
+				MYSQL_ROW row_hash = mysql_fetch_row(res_hash);
+				mysql_free_result(res_hash);
+				//row_hash[0]是16进制字符串，
+				//printf("%x%s", row_hash[0], row_hash[0]);
+				char prevhash[65];
+				memcpy(prevhash, row_hash[0], 64);
+				prevhash[64] = '\0';
+				char hex_pk[67];
+				char hex_proof[163];
+				byteToHexStr(pk, 33, hex_pk);
+				byteToHexStr(proof, 81, hex_proof);
+				char *tx = "transactions";
+				int height = slot;
+				/*printf("generate block: vrf args in hex: \n\thex_pk=%s\n\thex_output=%s\n\thex_proof=%s\n\tmsg=%s\n\tmsglen=%d\n", hex_pk, hex_output, hex_proof, msg, msglen);
+				memset(pk, '0', 33);
+				memset(output, '0', 32);
+				memset(proof,'0', 81);
+				from_hex(hex_pk, 66, pk);
+				from_hex(hex_output, 64, output);
+				from_hex(hex_proof, 162, proof);
+				CHECK(secp256k1_vrf_verify(output, proof, pk, msg, msglen) == 1);
+*/
+				insert_block(height, prevhash, hex_pk, hex_output, hex_proof,tx);
+
+
+			}
+			else if(strcmp(hex_output, difficulty)<0 && mulblk_flag==1){
+				//printf("\n\n\n\n\n很可惜，本轮有人先你一步产生区块了，你没有取得产生区块的资格\n\n\n\n\n");
+			}else{
+				//printf("您没有中奖哦\n");
+			}
+		}
+	}
+	mysql_free_result(res_ptr);
+	if(mulblk_flag == 0){
+
+	}
+	free(sql);
+	free(msg);
+}
+
+int validate_blockchain(){
+	char *nonce = "A6E3C57DD01ABE90086538398355DD4C3B17AA873382B0F24D6129493D8AAD60";
+	char *difficulty = "000D1B71758E2196800000000000000000000000000000000000000000000000";
+	char *msg;
+	int msglen;
+	msg = (char *)malloc(100);
+	secp256k1_context *ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN | SECP256K1_CONTEXT_VERIFY);
+
+	char *sql = (char *)malloc(100);
+	sprintf(sql, "select * from block");
+	MYSQL_RES *res_blocks;
+	select_sql(sql, &res_blocks);
+	int rows = mysql_num_rows(res_blocks);
+	int i = 0;
+	MYSQL_ROW block = mysql_fetch_row(res_blocks);
+
+
+	clock_t start, finish;
+	start = clock();
+	for(i=1; i<rows; i++){
+		printf("%d\n", i);
+		//从查询结果中提取数据
+		block = mysql_fetch_row(res_blocks);
+		int height;
+		char prevhash[65];
+		char vrf_pk[67];
+		char vrf_hash[65];
+		char vrf_proof[163];
+		char merkle_root[MERKLE_ROOT_LEN + 1];
+		char signature[149];
+		char tx[TX_LEN + 1];
+		char hash[65];
+		
+		height = atoi(block[0]);
+		sprintf(prevhash, 		"%s", block[1]);
+		sprintf(vrf_pk, 		"%s", block[2]);
+		sprintf(vrf_hash, 		"%s", block[3]);
+		sprintf(vrf_proof, 		"%s", block[4]);
+		sprintf(merkle_root, 	"%s", block[5]);
+		sprintf(signature, 		"%s", block[6]);
+		sprintf(tx, 			"%s", block[7]);
+		sprintf(hash, 			"%s", block[8]);
+		
+		sprintf(msg, "%s%.6X", nonce, height);
+		msglen = strlen(msg);	
+		//printf("validate block: vrf args in hex\n\thex_pk=%s\n\thex_output=%s\n\thex_proof=%s\n\tmsg=%s\n\tmsglen=%d\n", block[2], block[3], block[4], msg, msglen);
+		/*validate vrf*/
+		{
+				
+			//sprintf(msg, "%s%.6X", nonce, height);
+			//msglen = strlen(msg);
+			//printf("validate block: vrf args in hex: \n\thex_pk=%s\n\thex_output=%s\n\thex_proof=%s\n\tmsg=%s\n\tmsglen=%d\n", vrf_pk, vrf_hash, vrf_proof, msg, msglen);
+			unsigned char pk[33], proof[81], output[32];
+			from_hex(vrf_pk, 66, pk);
+			from_hex(vrf_hash, 64, output);
+			from_hex(vrf_proof, 162, proof);
+			CHECK(secp256k1_vrf_verify(output, proof, pk, msg, msglen) == 1);
+			CHECK(strcmp(vrf_hash, difficulty)<0);
+
+		}
+
+		/*validate block hash*/
+		{
+			char *blk_hdr = (char *)malloc(1024);
+			char hash_compute[65];
+			sprintf(blk_hdr, "%d%s%s%s%s%s", height, prevhash, vrf_pk, vrf_hash, vrf_proof, merkle_root);
+			get_hash(blk_hdr, hash_compute);
+			free(blk_hdr);
+			CHECK(memcmp(hash, hash_compute, sizeof(hash)) == 0);
+		}
+
+		/*validate signature*/
+		{
+			secp256k1_ecdsa_signature ecdsa_signature;
+			secp256k1_pubkey pubkey;
+
+			unsigned char message[32];
+			unsigned char pk[33];
+			// unsigned char sig[74];
+			size_t pklen = 33;
+			// size_t siglen = 74;
+			from_hex(hash, 64, message);
+			from_hex(vrf_pk, 66, pk);
+    		// from_hex(signature, 148, sig);
+			CHECK(secp256k1_ec_pubkey_parse(ctx, &pubkey, pk, pklen) == 1);
+			unsigned char data[64];
+			from_hex(signature, 128, data);
+			//memset(signature.data, '0', 64);
+			memcpy(ecdsa_signature.data, data, 64);
+			CHECK(secp256k1_ecdsa_verify(ctx, &ecdsa_signature, message, &pubkey) == 1);
+
+
+    		/*CHECK(secp256k1_ec_pubkey_parse(ctx, &pubkey, pk, pklen) == 1);
+			CHECK(secp256k1_ecdsa_signature_parse_der(ctx, &ecdsa_signature, sig, siglen) == 1);
+			CHECK(secp256k1_ecdsa_verify(ctx, &signature, message, &pubkey) == 1);
+			*/
+		}
+		/*validate prevhash*/
+		{
+			sprintf(sql, "select * from block where hash = \"%s\"", prevhash);
+			MYSQL_RES *res_prev_block;
+			select_sql(sql, &res_prev_block);
+			MYSQL_ROW prev_block = mysql_fetch_row(res_prev_block);
+			mysql_free_result(res_prev_block);
+			int prev_height;
+			char prev_prevhash[65];
+			char prev_vrf_pk[67];
+			char prev_vrf_hash[65];
+			char prev_vrf_proof[163];
+			char prev_merkle_root[MERKLE_ROOT_LEN + 1];
+			char prev_signature[149];
+			char prev_tx[TX_LEN + 1];
+			char prev_hash[65];
+			
+			prev_height = atoi(prev_block[0]);
+			sprintf(prev_prevhash, 		"%s", prev_block[1]);
+			sprintf(prev_vrf_pk, 		"%s", prev_block[2]);
+			sprintf(prev_vrf_hash, 		"%s", prev_block[3]);
+			sprintf(prev_vrf_proof, 	"%s", prev_block[4]);
+			sprintf(prev_merkle_root, 	"%s", prev_block[5]);
+			sprintf(prev_signature, 	"%s", prev_block[6]);
+			sprintf(prev_tx, 			"%s", prev_block[7]);
+			sprintf(prev_hash, 			"%s", prev_block[8]);
+			
+			char *blk_hdr = (char *)malloc(1024);
+			char hash_compute[65];
+			sprintf(blk_hdr, "%d%s%s%s%s%s", prev_height, prev_prevhash, prev_vrf_pk, \
+				prev_vrf_hash, prev_vrf_proof, prev_merkle_root);
+			get_hash(blk_hdr, hash_compute);
+			free(blk_hdr);
+			CHECK(memcmp(prevhash, hash_compute, sizeof(prevhash)) == 0);
+
+		}
+	}
+
+	finish = clock();
+	printf("validation time: %.6f", (double)(finish - start)/CLOCKS_PER_SEC);
+	free(msg);
+	mysql_free_result(res_blocks);
+	printf("validation success\n");
+
+}
 
 int main(){
-	generate_stakeholder();
+	
+	// char *input = "This is exactly 64 bytes long, not counting the terminating byte";
+	// char output[65];
+	// get_hash(input, output);
+	// printf("%s\n", output);
+
+	// generate_genblk();
+	
+
+	/*test for 查询语句*/
+	// char *sql = "select hash from block where height = 0";
+	// MYSQL_RES *res_ptr;
+	// select_sql(sql, &res_ptr);
+	// if(res_ptr == NULL) printf("离谱\n");
+	// if(res_ptr){
+	// 	int cols = mysql_num_fields(res_ptr);
+	// 	int rows = mysql_num_rows(res_ptr);
+	// 	MYSQL_ROW res_slct[rows];
+	// 	printf("cols=%d\nrows=%d\n", cols, rows);
+	// 	for(int i=0; i<rows; i++){
+	// 		res_slct[i] = mysql_fetch_row(res_ptr);
+	// 		for(int j=0; j<cols; j++){
+	// 			printf("%s\n", res_slct[i][j]);
+	// 		}
+	// 	}
+	// }
+
+	/*test for leader_election*/
+	//generate_stakeholder();
+	char *sql = "truncate table block";
+	insert_sql(sql);
+	generate_genblk();
+	clock_t start, finish, start_time, finish_time;
+	start_time = clock();
+	for(int i=1; i<2; i++){
+		printf("%dth slot leader_election\n", i);
+		
+		start = clock();
+		leader_election(i);
+		finish = clock();
+		printf("using time: %f\nseconds",(double)(finish - start)/CLOCKS_PER_SEC);
+	}
+	validate_blockchain();
+	finish_time = clock();
+	printf("%f\n",(double)(finish_time - start_time)/CLOCKS_PER_SEC);
 	return 0;
 }
