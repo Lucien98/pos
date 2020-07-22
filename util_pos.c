@@ -67,22 +67,13 @@ void get_hash(char *input, char *output){
     secp256k1_sha256_initialize(&hasher);
     secp256k1_sha256_write(&hasher, (const unsigned char*)(input), strlen(input));
     secp256k1_sha256_finalize(&hasher, out);
-    //printf("strlen(inputs[%d])=%d\nout=%s\n", i, strlen(inputs[i]), out);
-    //CHECK(memcmp(out, outputs[i], 32) == 0);
     if (strlen(input) > 0) {
         int split = secp256k1_rand_int(strlen(input));
-        //printf("split=%d\n", split);
         secp256k1_sha256_initialize(&hasher);
         secp256k1_sha256_write(&hasher, (const unsigned char*)(input), split);
         secp256k1_sha256_write(&hasher, (const unsigned char*)(input + split), strlen(input) - split);
         secp256k1_sha256_finalize(&hasher, out);
         byteToHexStr(out, 32, output);
-        // print_hex("out", out, 32);
-        // char outputsi[9];
-        // sprintf(outputsi, "outputs%d", i );
-        // outputsi[8] = '\0';
-        // print_hex(outputsi, outputs[i], 32);
-        //CHECK(memcmp(out, outputs[i], 32) == 0);
 	}
 	output[64] = '\0';
 }
@@ -93,16 +84,17 @@ void sign(unsigned char message[32], char hex_signature[149], unsigned char sk[3
 	secp256k1_context *ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN | SECP256K1_CONTEXT_VERIFY);
 	CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey, sk) == 1);
 	CHECK(secp256k1_ecdsa_sign(ctx, &signature, message, sk, NULL, NULL) == 1);
-	CHECK(secp256k1_ecdsa_verify(ctx, &signature, message, &pubkey) == 1);
+	//CHECK(secp256k1_ecdsa_verify(ctx, &signature, message, &pubkey) == 1);
 	
 	//method 1: serialize signature
 	byteToHexStr(signature.data, 64, hex_signature);
-	unsigned char data[64];
+	/*unsigned char data[64];
 	from_hex(hex_signature, 128, data);
 	memset(signature.data, '0', 64);
 	memcpy(signature.data, data, 64);
 	CHECK(secp256k1_ecdsa_verify(ctx, &signature, message, &pubkey) == 1);
-	
+	*/
+
 	//method 2: serialize signature
 	/*unsigned char sig[75];
 	size_t siglen = 74;

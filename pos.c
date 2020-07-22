@@ -51,8 +51,6 @@ void generate_stakeholder(void){
 	insert_sql(sql_gen_stkhld);
 	free(sql_gen_stkhld);
 }
-//INSERT INTO `block` VALUES ('1', 'prehash', 'vrf_pk',
-// 'vrf_hash', 'vrf_proof', 'merkle_root', 'signatue', 'tx', 'hash')
 
 /*block_header hash, signature, merkle_root都是可以计算的 */
 void insert_block(int height, unsigned char prevhash[], unsigned char vrf_pk[], \
@@ -86,7 +84,6 @@ void insert_block(int height, unsigned char prevhash[], unsigned char vrf_pk[], 
 
 	sprintf(sql, "insert into block values(%d, \"%s\", \"%s\", \"%s\", \"%s\", \"%s\", \"%s\", \"%s\", \"%s\")",
 		height, prevhash, vrf_pk, vrf_hash, vrf_proof, merkle_root, signature, tx, hash);
-	//printf("%s\n", sql);
 	insert_sql(sql);
 	free(blk_hdr);
 	free(sql);
@@ -102,16 +99,14 @@ void generate_genblk(){
 	memset(vrf_pk, '0', 66);
 	memset(vrf_hash, '0', 64);
 	prevhash[64] = vrf_proof[162] = vrf_pk[66] = vrf_hash[64] = '\0';
-	//printf("%s\n", vrf_pk);
 	insert_block(height, prevhash, vrf_pk, vrf_hash, vrf_proof,tx);
-	//printf("prevhash=%s\nvrf_proof", prevhash);
-
+	
 }
 
 
 int mulblk_flag = 0;//一个slot出现多个合法区块的标记
 
-/*进行vrf的计算，不如将上一区块的hash作为随机数种子？*/
+/**/
 void leader_election(int slot){
 	
 
@@ -132,10 +127,13 @@ void leader_election(int slot){
 	size_t pklen = 33;
 	secp256k1_context *sender = secp256k1_context_create(SECP256K1_CONTEXT_SIGN | SECP256K1_CONTEXT_VERIFY);
 	msglen = strlen(msg);
+	
+	//use stakeholder's sk to compute their vrf output, proof, and pk
 	char *sql = (char *)malloc(100);
 	sprintf(sql,"select sk from stakeholder");
 	MYSQL_RES  *res_ptr;
 	select_sql(sql, &res_ptr);
+	
 	if(res_ptr){
 		for(int i=0; i<NUM_STKHLD; i++){
 			MYSQL_ROW row = mysql_fetch_row(res_ptr);//row[0] is the sk string
@@ -148,39 +146,29 @@ void leader_election(int slot){
 			char hex_output[65];
 			byteToHexStr(output, 32, hex_output);
 			
-			CHECK(secp256k1_vrf_verify(output, proof, pk, msg, msglen) == 1);
+			//CHECK(secp256k1_vrf_verify(output, proof, pk, msg, msglen) == 1);
 
 			if(strcmp(hex_output, difficulty)<0 && mulblk_flag==0){
-				//printf("vrf verify success, converting data to hex_string\n");
 				mulblk_flag = 1;
-				//printf("\n\n\n\n\n终于可以产生一个区块了\n\n\n\n\n\n\n\n");
-				//get prevhash
-				//sql, "select hash from block where height = (select max(height) from block)";
+				
+				/*get prevhash*/
 				sprintf(sql, "select hash from block where height = (select max(height) from block)");
 				MYSQL_RES *res_hash;
 				select_sql(sql, &res_hash);
 				MYSQL_ROW row_hash = mysql_fetch_row(res_hash);
 				mysql_free_result(res_hash);
-				//row_hash[0]是16进制字符串，
-				//printf("%x%s", row_hash[0], row_hash[0]);
 				char prevhash[65];
 				memcpy(prevhash, row_hash[0], 64);
 				prevhash[64] = '\0';
+				
+				/*convert pk, proof to hex string*/
 				char hex_pk[67];
 				char hex_proof[163];
 				byteToHexStr(pk, 33, hex_pk);
 				byteToHexStr(proof, 81, hex_proof);
 				char *tx = "transactions";
 				int height = slot;
-				/*printf("generate block: vrf args in hex: \n\thex_pk=%s\n\thex_output=%s\n\thex_proof=%s\n\tmsg=%s\n\tmsglen=%d\n", hex_pk, hex_output, hex_proof, msg, msglen);
-				memset(pk, '0', 33);
-				memset(output, '0', 32);
-				memset(proof,'0', 81);
-				from_hex(hex_pk, 66, pk);
-				from_hex(hex_output, 64, output);
-				from_hex(hex_proof, 162, proof);
-				CHECK(secp256k1_vrf_verify(output, proof, pk, msg, msglen) == 1);
-*/
+				
 				insert_block(height, prevhash, hex_pk, hex_output, hex_proof,tx);
 
 
@@ -245,13 +233,8 @@ int validate_blockchain(){
 		
 		sprintf(msg, "%s%.6X", nonce, height);
 		msglen = strlen(msg);	
-		//printf("validate block: vrf args in hex\n\thex_pk=%s\n\thex_output=%s\n\thex_proof=%s\n\tmsg=%s\n\tmsglen=%d\n", block[2], block[3], block[4], msg, msglen);
-		/*validate vrf*/
 		{
 				
-			//sprintf(msg, "%s%.6X", nonce, height);
-			//msglen = strlen(msg);
-			//printf("validate block: vrf args in hex: \n\thex_pk=%s\n\thex_output=%s\n\thex_proof=%s\n\tmsg=%s\n\tmsglen=%d\n", vrf_pk, vrf_hash, vrf_proof, msg, msglen);
 			unsigned char pk[33], proof[81], output[32];
 			from_hex(vrf_pk, 66, pk);
 			from_hex(vrf_hash, 64, output);
@@ -278,24 +261,15 @@ int validate_blockchain(){
 
 			unsigned char message[32];
 			unsigned char pk[33];
-			// unsigned char sig[74];
 			size_t pklen = 33;
-			// size_t siglen = 74;
 			from_hex(hash, 64, message);
 			from_hex(vrf_pk, 66, pk);
-    		// from_hex(signature, 148, sig);
-			CHECK(secp256k1_ec_pubkey_parse(ctx, &pubkey, pk, pklen) == 1);
+    		CHECK(secp256k1_ec_pubkey_parse(ctx, &pubkey, pk, pklen) == 1);
 			unsigned char data[64];
 			from_hex(signature, 128, data);
-			//memset(signature.data, '0', 64);
 			memcpy(ecdsa_signature.data, data, 64);
 			CHECK(secp256k1_ecdsa_verify(ctx, &ecdsa_signature, message, &pubkey) == 1);
 
-
-    		/*CHECK(secp256k1_ec_pubkey_parse(ctx, &pubkey, pk, pklen) == 1);
-			CHECK(secp256k1_ecdsa_signature_parse_der(ctx, &ecdsa_signature, sig, siglen) == 1);
-			CHECK(secp256k1_ecdsa_verify(ctx, &signature, message, &pubkey) == 1);
-			*/
 		}
 		/*validate prevhash*/
 		{
@@ -345,40 +319,15 @@ int validate_blockchain(){
 
 int main(){
 	
-	// char *input = "This is exactly 64 bytes long, not counting the terminating byte";
-	// char output[65];
-	// get_hash(input, output);
-	// printf("%s\n", output);
-
-	// generate_genblk();
-	
-
-	/*test for 查询语句*/
-	// char *sql = "select hash from block where height = 0";
-	// MYSQL_RES *res_ptr;
-	// select_sql(sql, &res_ptr);
-	// if(res_ptr == NULL) printf("离谱\n");
-	// if(res_ptr){
-	// 	int cols = mysql_num_fields(res_ptr);
-	// 	int rows = mysql_num_rows(res_ptr);
-	// 	MYSQL_ROW res_slct[rows];
-	// 	printf("cols=%d\nrows=%d\n", cols, rows);
-	// 	for(int i=0; i<rows; i++){
-	// 		res_slct[i] = mysql_fetch_row(res_ptr);
-	// 		for(int j=0; j<cols; j++){
-	// 			printf("%s\n", res_slct[i][j]);
-	// 		}
-	// 	}
-	// }
-
-	/*test for leader_election*/
 	//generate_stakeholder();
 	char *sql = "truncate table block";
 	insert_sql(sql);
+
 	generate_genblk();
+
 	clock_t start, finish, start_time, finish_time;
 	start_time = clock();
-	for(int i=1; i<2; i++){
+	for(int i=1; i<10; i++){
 		printf("%dth slot leader_election\n", i);
 		
 		start = clock();
@@ -390,4 +339,5 @@ int main(){
 	finish_time = clock();
 	printf("%f\n",(double)(finish_time - start_time)/CLOCKS_PER_SEC);
 	return 0;
+
 }

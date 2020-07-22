@@ -17,7 +17,9 @@ ar -crv libutil_mysql.a util_mysql.o
 #define PASSWORD "root"
 #define DATABASE "pos"
 
-/*执行sql插入语句*/
+/*	exec the sql statements that do not involve with a result set 
+	such as insert, delele, update, truncate
+*/
 void insert_sql(char *sql){
 	MYSQL *conn;	
 	conn = mysql_init(NULL);
@@ -34,21 +36,19 @@ void insert_sql(char *sql){
 	int res;
 	res = mysql_query(conn, sql);
 	if(res){
-		printf("插入数据失败\n%s\n", mysql_error(conn));
+		printf("failure in insert＿sql function\n%s\n", mysql_error(conn));
 		mysql_close(conn);
 		getchar();
 		system("read");
-		//exit(1);
 	}else{
 		my_ulonglong affected_row = mysql_affected_rows(conn);
 		printf("%d rows affected.\n", (int)affected_row);
 	}
 }
 
-/*对传入的res_ptr指针进行修改，使之记录结果*/
+/*exec select statement in sql, modifies the result pointer */
 void select_sql(char *sql, MYSQL_RES **res_ptr){
-	MYSQL *conn = mysql_init(NULL);//初始化一个mysql连接的对象
-	//conn = mysql_init(NULL);
+	MYSQL *conn = mysql_init(NULL);
 	int res;
 
 	if(!conn)
@@ -60,11 +60,10 @@ void select_sql(char *sql, MYSQL_RES **res_ptr){
 		printf("query_sql: Connection failed\n");
 	res = mysql_query(conn, sql);
 	if(res){
-		printf("查询失败\n%s\n", mysql_error(conn));
+		printf("\nselect query failed\n%s\n\n", mysql_error(conn));
 		mysql_close(conn);
 		exit(1);
 	}	
-	//MYSQL_RES *result = mysql_store_result(conn);
 	*res_ptr = mysql_store_result(conn);
 
 	mysql_close(conn);
@@ -80,22 +79,15 @@ void get_stkhld_sk(char *pk, char *sk){
 	sprintf(sql, "select sk from stakeholder where pk = \"%s\"", pk);
 	int res = mysql_query(conn, sql);
 	if(res){
-		printf("查询失败\n%s\n", mysql_error(conn));
+		printf("get stakeholder sk failed\n%s\n", mysql_error(conn));
 		mysql_close(conn);
 		exit(1);
 	}
 	MYSQL_RES *res_ptr = mysql_store_result(conn);
 	MYSQL_ROW row = mysql_fetch_row(res_ptr);
 	mysql_free_result(res_ptr);
-	//if(row==NULL) {printf("row is null\n");exit(1);}
 	sprintf(sk, "%s", row[0]);
 	free(sql);
 	mysql_close(conn);
 
 }
-
-/*int main(){
-	char *sql = "INSERT INTO `block` VALUES ('1', 'prehash', 'vrf_pk', 'vrf_hash', 'vrf_proof', 'merkle_root', 'signatue', 'tx', 'hash')";
-	insert_sql(sql);
-	return 0;
-}*/
