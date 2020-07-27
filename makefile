@@ -1,12 +1,13 @@
 pos_simu: pos.o util_pos.o util_mysql.o
 	gcc -g -o pos_simu pos.o util_pos.o util_mysql.o \
-	-I /usr/include/mysql -L/usr/lib/mysql -lmysqlclient -lsecp256k1-vrf 
+	-I /usr/include/mysql -L/usr/lib/mysql -lmysqlclient -lsecp256k1-vrf -lMerkleTree \
+	-I ../merkle-tree/src
 
 pos.o: pos.c
 	gcc -g -c pos.c -I /usr/include/mysql -L/usr/lib/mysql -lmysqlclient
 
 util_pos.o: util_pos.c util_pos.h
-	gcc -g -c util_pos.c
+	gcc -g -c util_pos.c -lMerkleTree -I ../merkle-tree/src
 
 util_mysql.o: util_mysql.c util_mysql.h
 	gcc -g -c util_mysql.c -I /usr/include/mysql -L/usr/lib/mysql -lmysqlclient

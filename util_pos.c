@@ -9,7 +9,8 @@
 #include "util.h"
 #include "hash_impl.h"
 #include "testrand_impl.h"
-#include "scalar_4x64_impl.h"
+//#include "scalar_4x64_impl.h"
+#include "merkletree.h"
 
 unsigned char HexToInt(int h){
   CHECK( (h>='0' && h<='9') ||  (h>='a' && h<='f') ||  (h>='A' && h<='F') );
@@ -106,10 +107,48 @@ void sign(unsigned char message[32], char hex_signature[149], unsigned char sk[3
     CHECK(secp256k1_ecdsa_verify(ctx, &signature, message, &pubkey) == 1);*/
 }
 
-void get_merkle_root(char *input, char *output){
-	int i =0;
-	for(i=0; i<64; i++){
-		output[i] = '0';
+void get_merkle_root(char *field_tx, char *output){
+	mt_t *mt;
+	uint8_t tx[10][32];
+	//char field_tx[] = "(\"23B7283486AD1C53A5FBB9044C94A3A70DF95EFD0B0F6CB38E0712857BF91079\", \"01672B55C1536C0F86FC666AF5CE5415BCE22353A545F7AD6B87EE1867D37219\", \"69FDCEDF2CA6F8ACD4B819D2CF4EF59E820229DFC0E83F41F83C99A35A20D2B8\", \"AA1D583271A28DA2D26F4EEB4AC27D51B4246956E97DE1427E11F59A3D9CA583\", \"150523C16F3D017836B188C5ADBF89F8C51D9C719C3E78777102AB0BF713B5CB\", \"027E6B877CDA51CD59993954A32FB203F40B6B24EBA89557BC1426223830C32B\", \"A96F43BD3B788A00C4027356943391690DC671C7703957BD74BAE97FAAD65296\", \"2108DDD310CBB3157598AB53399D1C18A109EA97E4B90C2A1705228E06E4DD38\", \"25B67DA8EAFB469BF45AE3C7913C96D5BEE9AF6FB8ECF210E9BA4E73BBBF8814\", \"63A932A5CEF2576D0F8F98CA7B51E6FAA1F03541673FE68ED2F93A15A6A4FB59\")";
+	char hex_tx[10][65];
+	mt_hash_t root;
+	char *p;
+	
+	mt = mt_create();
+	memset(root, 0, sizeof(mt_hash_t));
+
+	char *delim = "\", ()";
+	p = strtok(field_tx, delim);
+	printf("%s\n", p);
+	memcpy(hex_tx[0], p, 64);
+	int i = 0;
+	while(i < 9)
+	{
+		p = strtok(NULL, delim);
+		memcpy(hex_tx[++i], p, 64);
+		//printf("%s\n", p);
 	}
-	output[64] = '\0';
+	i = 10;
+	while(i--){
+		from_hex(hex_tx[9-i], 64, tx[9-i]);
+	}
+
+	for(i=0; i < 10; i++){
+		// if(mt_add(mt, tx[i], 32) != MT_SUCCESS)
+		// 	printf("add fails\n");
+		CHECK(mt_add(mt, tx[i], 32) == MT_SUCCESS);
+	}
+
+	// for(i=0; i<10; i++){
+	// 	if(mt_verify(mt, tx[i], 32, i) != MT_SUCCESS)
+	// 		printf("verify fails\n");
+	// }
+	mt_get_root(mt, root);
+	//print_hex("root", root, 32);
+
+	mt_delete(mt);
+	byteToHexStr(root, 32, output);	
+	//output[64] = '\0';
 }
+
