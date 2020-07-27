@@ -25,15 +25,11 @@ void insert_sql(char *sql){
 	MYSQL *conn;	
 	conn = mysql_init(NULL);
 	
-	if(!conn){
-		fprintf(stderr,"mysql_init failed\n");
-		exit(1);	
-	}	
 	conn = mysql_real_connect(conn, HOST, USERNAME, PASSWORD, DATABASE, 0, NULL, 0);
-	if(conn)
-		printf("insert_sql: Connection success\n");	
-	else	
+	if(!conn){
 		printf("insert_sql: Connection failed\n");
+		exit(1);
+	}
 	int res;
 	res = mysql_query(conn, sql);
 	if(res){
@@ -52,13 +48,12 @@ void select_sql(char *sql, MYSQL_RES **res_ptr){
 	MYSQL *conn = mysql_init(NULL);
 	int res;
 
-	if(!conn)
-		printf("select_sql: mysql_init failed\n");
 	conn = mysql_real_connect(conn, HOST, USERNAME, PASSWORD, DATABASE, 0, NULL, 0);
-	if(conn)
-		printf("query_sql: Connection success\n");
-	else
+	if(!conn){
 		printf("query_sql: Connection failed\n");
+		exit(1);
+	}
+	
 	res = mysql_query(conn, sql);
 	if(res){
 		printf("\nselect query failed\n%s\n\n", mysql_error(conn));
@@ -75,8 +70,10 @@ void select_sql(char *sql, MYSQL_RES **res_ptr){
 void get_stkhld_sk(char *pk, char *sk){
 	MYSQL *conn = mysql_init(NULL);
 	conn = mysql_real_connect(conn, HOST, USERNAME, PASSWORD, DATABASE, 0, NULL, 0);
-	if(conn) printf("get_stkhld_sk:Connection success\n");
-	else printf("get_stkhld_sk:Connection failed\n");
+	if(!conn) {
+		printf("get_stkhld_sk:Connection failed\n");
+		exit(1);
+	}
 	char *sql = (char *)malloc(200);
 	sprintf(sql, "select sk from stakeholder where pk = \"%s\"", pk);
 	int res = mysql_query(conn, sql);
@@ -97,8 +94,10 @@ void get_stkhld_sk(char *pk, char *sk){
 void get_tx_pk(char *tx_hash, char *pk){
 	MYSQL *conn = mysql_init(NULL);
 	conn = mysql_real_connect(conn, HOST, USERNAME, PASSWORD, DATABASE, 0, NULL, 0);
-	if(conn) printf("get_tx_pk:Connection success\n");
-	else printf("get_tx_pk:Connection failed\n");
+	if(!conn){ 
+		printf("get_tx_pk:Connection success\n");
+		exit(1);
+	}
 	char *sql = (char *)malloc(200);
 	sprintf(sql, "select receiver_pk from transaction where tx_hash = \"%s\"", tx_hash);
 	int res = mysql_query(conn, sql);

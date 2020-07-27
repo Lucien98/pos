@@ -73,7 +73,6 @@ void insert_block(int height, unsigned char prevhash[], unsigned char vrf_pk[], 
 
 	char *blk_hdr = (char *)malloc(1024);
 	sprintf(blk_hdr, "%d%s%s%s%s%s", height, prevhash, vrf_pk, vrf_hash, vrf_proof, merkle_root);
-	printf("%s\n", blk_hdr);
 	get_hash(blk_hdr, hash);
 
 	//如果不是genesis block，则生成对区块哈希的签名
@@ -87,7 +86,6 @@ void insert_block(int height, unsigned char prevhash[], unsigned char vrf_pk[], 
 		from_hex(hash, 64, message);
 		sign(message, signature, seckey);
 	}
-
 
 	sprintf(sql, "insert into block values(%d, \"%s\", \"%s\", \"%s\", \"%s\", \"%s\", \"%s\", \'%s\', \"%s\")",
 		height, prevhash, vrf_pk, vrf_hash, vrf_proof, merkle_root, signature, tx, hash);
@@ -116,7 +114,7 @@ int mulblk_flag = 0;//一个slot出现多个合法区块的标记
 /**/
 void leader_election(int slot){
 	
-
+	printf("\n\n\n%dth　slot leader election\n", slot);
 	mulblk_flag = 0;
 	char *nonce = "A6E3C57DD01ABE90086538398355DD4C3B17AA873382B0F24D6129493D8AAD60";
 	char *difficulty = "000D1B71758E2196800000000000000000000000000000000000000000000000";
@@ -137,12 +135,12 @@ void leader_election(int slot){
 	
 	//use stakeholder's sk to compute their vrf output, proof, and pk
 	char *sql = (char *)malloc(100);
-	sprintf(sql,"select sk from stakeholder");
+	sprintf(sql,"select sk, id from stakeholder");
 	MYSQL_RES  *res_ptr;
 	select_sql(sql, &res_ptr);
 	
 	if(res_ptr){
-		for(int i=0; i<NUM_STKHLD; i++){
+		for(i=0; i<NUM_STKHLD; i++){
 			MYSQL_ROW row = mysql_fetch_row(res_ptr);//row[0] is the sk string
 			//covert string version hex to unsigned char version hex(type: unsigned char )
 			from_hex(row[0], 64, seckey);
@@ -153,9 +151,9 @@ void leader_election(int slot){
 			char hex_output[65];
 			byteToHexStr(output, 32, hex_output);
 			
-			//CHECK(secp256k1_vrf_verify(output, proof, pk, msg, msglen) == 1);
-
 			if(strcmp(hex_output, difficulty)<0 && mulblk_flag==0){
+				printf("stakeholder %s is elected as the %dth slot leader\n", row[1], slot);
+
 				mulblk_flag = 1;
 				
 				/*get prevhash*/
@@ -174,14 +172,17 @@ void leader_election(int slot){
 				byteToHexStr(pk, 33, hex_pk);
 				byteToHexStr(proof, 81, hex_proof);
 				
-				//char *tx = "transactions";
+				printf("generating tx\n");
 				char *tx = (char *)malloc(750);
 				generate_tx(tx);
-
-				int height = slot;
 				
+				int height = slot;
+				printf("generating a block \n");				
 				insert_block(height, prevhash, hex_pk, hex_output, hex_proof,tx);
-
+				mysql_free_result(res_ptr);
+				free(sql);
+				free(msg);
+				return ;
 
 			}
 			else if(strcmp(hex_output, difficulty)<0 && mulblk_flag==1){
@@ -193,7 +194,7 @@ void leader_election(int slot){
 	}
 	mysql_free_result(res_ptr);
 	if(mulblk_flag == 0){
-
+		printf("no one is chosen for slot leader\n");
 	}
 	free(sql);
 	free(msg);
@@ -216,11 +217,9 @@ int validate_blockchain(){
 	sprintf(sql, "select * from block");
 	MYSQL_RES *res_blocks;
 
-	printf("%s\n", sql);
-	struct timespec begin, end, now;
+	struct timespec begin, end;
 	long long start, finish;
 	clock_gettime(CLOCK_MONOTONIC, &begin);
-	// = now.tv_nsec;
 	select_sql(sql, &res_blocks);
 	clock_gettime(CLOCK_MONOTONIC, &end);
 	printf("select sql using time: %f\n", (double) (end.tv_nsec - begin.tv_nsec)/1000000000 + end.tv_sec - begin.tv_sec);
@@ -248,7 +247,6 @@ int validate_blockchain(){
 	secp256k1_ecdsa_signature ecdsa_signature;
 	secp256k1_pubkey pubkey;
 	unsigned char message[32];
-	//unsigned char pk[33];
 	size_t pklen = 33;
 	unsigned char data[64];
 
@@ -259,21 +257,18 @@ int validate_blockchain(){
 	char *tx_bak = (char *)malloc(750);
 	char root[65];
 	char hex_pk[67];
-	//unsigned char message[32];
 	char hex_tx[10][65];
 	char *delim = "\", ()";
 	char *p;
 	int j;
-	//block = mysql_fetch_row(res_blocks);
-	//int row_num = mysql_num_rows(res_blocks);
-	printf("开始\n");
+	printf("\n\n\nvalidating starts\n");
 	for(i=1; i<rows; i++){
-		printf("%d\n", i);
 		//从查询结果中提取数据
 		block = mysql_fetch_row(res_blocks);
 		if(block == NULL){
 			printf("block is null\n");
 		}
+		printf("\n\n\nvalidating block in slot %s\n", block[0]);
 		height = atoi(block[0]);
 		sprintf(prevhash, 		"%s", block[1]);
 		sprintf(vrf_pk, 		"%s", block[2]);
@@ -299,7 +294,6 @@ int validate_blockchain(){
 		/*validate block hash*/
 		{
 			sprintf(blk_hdr, "%d%s%s%s%s%s", height, prevhash, vrf_pk, vrf_hash, vrf_proof, merkle_root);
-			printf("%s\n", blk_hdr);
 			get_hash(blk_hdr, hash_compute);
 			CHECK(memcmp(hash, hash_compute, 64) == 0);
 		}
@@ -320,39 +314,10 @@ int validate_blockchain(){
 			sprintf(sql, "select * from block where hash = \"%s\"", prevhash);
 			MYSQL_RES *res_prev_block;
 			
-			printf("%s\n", sql);
-			clock_gettime(CLOCK_MONOTONIC, &begin);
 			select_sql(sql, &res_prev_block);
-			clock_gettime(CLOCK_MONOTONIC, &end);
-			printf("select sql using time: %f\n", (double) (end.tv_nsec - begin.tv_nsec)/1000000000 + end.tv_sec - begin.tv_sec);
-			
-			//select_sql(sql, &res_prev_block);
-			
 
 			MYSQL_ROW prev_block = mysql_fetch_row(res_prev_block);
 			mysql_free_result(res_prev_block);
-			{
-				/*int prev_height;
-				char prev_prevhash[65];
-				char prev_vrf_pk[67];
-				char prev_vrf_hash[65];
-				char prev_vrf_proof[163];
-				char prev_merkle_root[MERKLE_ROOT_LEN + 1];
-				char prev_signature[149];
-				char prev_tx[TX_LEN + 1];
-				char prev_hash[65];
-				*/
-				/*height = atoi(prev_block[0]);
-				sprintf(prev_prevhash, 		"%s", prev_block[1]);
-				sprintf(vrf_pk, 		"%s", prev_block[2]);
-				sprintf(vrf_hash, 		"%s", prev_block[3]);
-				sprintf(vrf_proof, 	"%s", prev_block[4]);
-				sprintf(merkle_root, 	"%s", prev_block[5]);
-				sprintf(signature, 	"%s", prev_block[6]);
-				sprintf(tx, 			"%s", prev_block[7]);
-				sprintf(hash, 			"%s", prev_block[8]);
-				*/
-			}
 			sprintf(blk_hdr, "%s%s%s%s%s%s", prev_block[0], prev_block[1], prev_block[2], \
 				prev_block[3], prev_block[4], prev_block[5]);
 			get_hash(blk_hdr, hash_compute);
@@ -371,7 +336,6 @@ int validate_blockchain(){
 
 		//verify merkle_root
 		{
-			printf("%s\n%d\n", tx, strlen(tx));
 			memcpy(tx_bak, tx, strlen(tx));
 			get_merkle_root(tx_bak, root);
 			CHECK(memcmp(block[5], root, 64) == 0);
@@ -379,13 +343,7 @@ int validate_blockchain(){
 		//verify tx hash and sig
 		{
 			sprintf(sql, "select * from transaction where tx_hash in (%s)", tx);
-			// printf("%s\n", sql);
-			clock_gettime(CLOCK_MONOTONIC, &begin);
 			select_sql(sql, &res);
-			clock_gettime(CLOCK_MONOTONIC, &end);
-			printf("select sql using time: %f\n", (double) (end.tv_nsec - begin.tv_nsec)/1000000000 + end.tv_sec - begin.tv_sec);
-
-			//select_sql(sql, &res);
 			while(row = mysql_fetch_row(res)){
 				sprintf(msg, "%s%s%s", row[1], row[2], row[3]);
 				get_hash(msg, hash);
@@ -412,44 +370,21 @@ int validate_blockchain(){
 			j = 0;
 			while(p = strtok(NULL, delim))
 				memcpy(hex_tx[++j], p, 64);
-			//for()
 			qsort(hex_tx, 10, sizeof(char)*65, compare);
-			for(j=0; j<10; j++){
-				printf("%-.64s\n", hex_tx[j]);
-			}
 			for(j=0; j < 9; j++){
-				//printf("%d\n", memcmp(hex_tx[j], hex_tx[j+1], 64));
-				//printf("%s\n%s\n\n", hex_tx[j], hex_tx[j+1]);
-				//getchar();
 				CHECK(memcmp(hex_tx[j], hex_tx[j+1], 64) != 0);
 			}
 			sprintf(sql, "select count(stxo) from stxo where stxo like '%%%-.64s%%'", hex_tx[0]);
 			for(j=1; j<10; sprintf(sql, "%s or stxo like '%%%-.64s%%'", sql, hex_tx[j++]));
-			printf("%s\n", sql);
-			
-			clock_gettime(CLOCK_MONOTONIC, &begin);
 			select_sql(sql, &res);
-			clock_gettime(CLOCK_MONOTONIC, &end);
-			printf("select sql using time: %f\n", (double) (end.tv_nsec - begin.tv_nsec)/1000000000 + end.tv_sec - begin.tv_sec);
-	
-
-			//select_sql(sql, &res);
 			row = mysql_fetch_row(res);
 			CHECK(memcmp(row[0], "0", 1) == 0);
 			sprintf(sql, "update stxo set stxo = concat(stxo, '%s')", tx);
-			
-			printf("%s\n", sql);
-			clock_gettime(CLOCK_MONOTONIC, &begin);
+			printf("mark tx in this block as spent tx\n");
 			insert_sql(sql);
-			clock_gettime(CLOCK_MONOTONIC, &end);
-			printf("insert sql using time: %f\n", (double) (end.tv_nsec - begin.tv_nsec)/1000000000 + end.tv_sec - begin.tv_sec);
-	
-
-			//insert_sql(sql);
 
 		}
 	}
-	printf("结束\n");
 	finish_a = time(NULL);
 	printf("validation time: %d\n", (finish_a - start_a));
 	free(msg);
@@ -484,24 +419,19 @@ void generate_utxo(){
 	unsigned char pk[33];//this pk will fill the ref_hash field while there is no utxo has been created
 	size_t pklen = 33;
 
-	//char *sk[67];
-	//byteToHexStr(seckey, 32, sk);
-	//printf("%s\n", sk);
 	CHECK(secp256k1_ec_pubkey_create(ctx, &pubkey, seckey) == 1);
 	CHECK(secp256k1_ec_pubkey_serialize(ctx, pk, &pklen, &pubkey, SECP256K1_EC_COMPRESSED) == 1);
 
 
 	char ref_hash[67];
 	byteToHexStr(pk, 33, ref_hash);
-	printf("%s\n", ref_hash);
-
+	
 	int value;
 
 	char *msg = (char *)malloc(66+66+5);
 	unsigned char msg_hash[32];
 	char hex_hash[65];
 	char hex_sig[129];
-	//sql = "select pk from stakeholder";
 	MYSQL_RES *res_pk;
 	int has_spent = 0;
 	int utxo_count = 0;
@@ -511,13 +441,11 @@ void generate_utxo(){
 	clock_t start, finish;
 	start = clock();
 	for(select_sql("select pk from stakeholder", &res_pk);row_pk = mysql_fetch_row(res_pk) && i--;){
-		//row_pk[0];
 		row_pk = mysql_fetch_row(res_pk);
 		do{
 			value = secp256k1_rand_int(MAX_TRANSFER_VALUE);
 			//concatenate ref_hash | row_pk[0] | value and hash it 
 			sprintf(msg, "%s%s%d", ref_hash, row_pk[0], value);
-			//printf("%s\n",msg);
 			get_hash(msg, hex_hash);
 			from_hex(hex_hash, 64, msg_hash);
 			sign(msg_hash, hex_sig, seckey);
@@ -559,8 +487,7 @@ void generate_tx(char *tx){
 	char sk[65];
 	char hex_pk[67];
 	int has_spent = 0;
-	//unsigned char pk[33];
-
+	
 	sql[0] = '\0';
 	sprintf(sql, "insert into transaction (tx_hash, ref_hash, receiver_pk, value, sig, has_spent) values ");
 	tx[0] = '\0';
@@ -570,13 +497,12 @@ void generate_tx(char *tx){
 		/*需要更新has_spent字段，　*/
 		sprintf(tx, "%s\"%s\", ", tx, row_tx[0]);
 		sprintf(msg, "%s%s%s", row_tx[0]/*curr tx's ref_hash*/, row_pk[0], row_tx[3]);
-		//printf("row_tx[3] = %s\nrow_tx[3] = %d", row_tx[3], row_tx);
 		get_hash(msg, hex_hash);
+		
 		get_tx_pk(row_tx[0], hex_pk);//ref_tx
 		get_stkhld_sk(hex_pk, sk);
 		from_hex(sk, 64, seckey);
 		from_hex(hex_hash, 64, msg_hash);
-
 		sign(msg_hash, hex_sig, seckey);
 
 		sprintf(sql, "%s(\"%s\", \"%s\", \"%s\", %s, \"%s\", %d), ", 
@@ -587,11 +513,11 @@ void generate_tx(char *tx){
 	mysql_free_result(res_tx);
 	mysql_free_result(res_pk);
 	sql[strlen(sql)-2] = '\0';
+	printf("inseting 10 new tx into tx table\n");
 	insert_sql(sql);
 	tx[strlen(tx)-2] = '\0';
 	sprintf(sql, "update transaction set has_spent = 1 where tx_hash in (%s)", tx);
-	printf("%s\n",sql);
-	//exit(1);
+	printf("mark which 10 tx output has been spent\n");
 	insert_sql(sql);
 	free(sql);
 	free(msg);
@@ -620,11 +546,7 @@ void validate_transaction(){
 		/*validate hash*/
 		{
 			sprintf(msg, "%s%s%s", row_tx[1], row_tx[2], row_tx[3]);
-			printf("%s\n",msg);
 			get_hash(msg, compute_hash);
-			//printf("%s\n", &row_tx[0]);
-			//printf("%s\n", row_tx[0]);
-			//printf("%s\n", compute_hash);
 			CHECK(memcmp(row_tx[0], compute_hash, sizeof(compute_hash)) == 0);
 		}
 
@@ -653,38 +575,20 @@ int main(){
 	//generate_genblk();
 	// generate_utxo();
 
-	//int start, finish;
 	int start, finish, start_time, finish_time;
 	start_time = time(NULL);
 	for(int i=1; i<10; i++){
-		printf("%dth slot leader_election\n", i);
+		//printf("%dth slot leader_election\n", i);
 		
-		//start = clock();
 		start = time(NULL);
 		leader_election(i);
 		finish = time(NULL);
-		//finish = clock();
 		printf("using time: %dseconds\n",(finish - start));
 	}
 	validate_blockchain();
 	finish_time = time(NULL);
 	printf("%f\n",(finish_time - start_time));
 	
-	
-	//validate_blockchain();
-	// int i = 0;
-	// do{
-	// 	printf("%d\n", secp256k1_rand_int(1000));
-	// }while(i++ < 100);
-
-	//generate_utxo();
-	//validate_transaction();
-	
-	//char *tx = (char *)malloc(10240);
-	//generate_tx(tx);
-	// int i=1000;
-	// while(i++ < 1010)
-	// 	leader_election(i);
 	return 0;
 
 }
