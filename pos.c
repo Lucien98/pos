@@ -3,8 +3,8 @@ gcc pos.c -o pos -I /usr/include/mysql -L/usr/lib/mysql -lmysqlclient
 sudo ./pos
 */
 #include "secp256k1-vrf.h"
-#include "util.h"
-#include "testrand_impl.h"
+#include "secp256k1-vrf/util.h"
+#include "secp256k1-vrf/testrand_impl.h"
 
 #include "mysql.h"
 
@@ -26,7 +26,7 @@ sudo ./pos
 #define DIFFICULTY "0D1B71758E2196800000000000000000000000000000000000000000000000" 
 #define MAX_TRANSFER_VALUE 1000
 void generate_stakeholder(void){
-	secp256k1_context *ctx;
+	secp256k1_context  *ctx;
 	unsigned char seckey[32];
 	secp256k1_pubkey pubkey;
 	unsigned char pk[33];

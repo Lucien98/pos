@@ -6,9 +6,9 @@
 #include "util_pos.h"
 #include "string.h"
 #include "secp256k1-vrf.h"
-#include "util.h"
-#include "hash_impl.h"
-#include "testrand_impl.h"
+#include "secp256k1-vrf/util.h"
+#include "secp256k1-vrf/hash_impl.h"
+#include "secp256k1-vrf/testrand_impl.h"
 #include "merkletree.h"
 
 unsigned char HexToInt(int h){
