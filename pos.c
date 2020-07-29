@@ -138,7 +138,7 @@ void leader_election(int slot){
 	sprintf(sql,"select sk, id from stakeholder");
 	MYSQL_RES  *res_ptr;
 	select_sql(sql, &res_ptr);
-	
+	int del_response, del_request;
 	if(res_ptr){
 		for(i=0; i<NUM_STKHLD; i++){
 			MYSQL_ROW row = mysql_fetch_row(res_ptr);//row[0] is the sk string
@@ -174,7 +174,10 @@ void leader_election(int slot){
 				
 				printf("generating tx\n");
 				char *tx = (char *)malloc(750);
-				generate_tx(tx);
+				tx[0] = '\0';
+				del_response = generate_tx_del_response(tx);
+				del_request = generate_tx_del_request(tx);
+				generate_tx(tx, 10 - del_request - del_response);
 				
 				int height = slot;
 				printf("generating a block \n");				
@@ -207,7 +210,7 @@ int compare(const void *p1, const void *p2){
 int validate_blockchain(){
 	char *nonce = "A6E3C57DD01ABE90086538398355DD4C3B17AA873382B0F24D6129493D8AAD60";
 	char *difficulty = "000D1B71758E2196800000000000000000000000000000000000000000000000";
-	char *msg = (char *)malloc(66+66+5);
+	char *msg = (char *)malloc(66+66+5+228114);
 	int msglen;
 
 	secp256k1_context *ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN | SECP256K1_CONTEXT_VERIFY);
@@ -252,7 +255,10 @@ int validate_blockchain(){
 
 	int start_a, finish_a;
 	start_a = time(NULL);
+	MYSQL_RES *res_prev_block;
 	MYSQL_RES *res;
+	MYSQL_RES *del_response;
+	MYSQL_ROW del_resp_message;
 	MYSQL_ROW row;
 	char *tx_bak = (char *)malloc(750);
 	char root[65];
@@ -261,6 +267,9 @@ int validate_blockchain(){
 	char *delim = "\", ()";
 	char *p;
 	int j;
+
+	char *del_resp_tx_msg = (char *)malloc(228114);
+
 	printf("\n\n\nvalidating starts\n");
 	for(i=1; i<rows; i++){
 		//从查询结果中提取数据
@@ -312,12 +321,10 @@ int validate_blockchain(){
 		/*validate prevhash*/
 		{
 			sprintf(sql, "select * from block where hash = \"%s\"", prevhash);
-			MYSQL_RES *res_prev_block;
 			
 			select_sql(sql, &res_prev_block);
 
 			MYSQL_ROW prev_block = mysql_fetch_row(res_prev_block);
-			mysql_free_result(res_prev_block);
 			sprintf(blk_hdr, "%s%s%s%s%s%s", prev_block[0], prev_block[1], prev_block[2], \
 				prev_block[3], prev_block[4], prev_block[5]);
 			get_hash(blk_hdr, hash_compute);
@@ -345,9 +352,79 @@ int validate_blockchain(){
 			sprintf(sql, "select * from transaction where tx_hash in (%s)", tx);
 			select_sql(sql, &res);
 			while(row = mysql_fetch_row(res)){
-				sprintf(msg, "%s%s%s", row[1], row[2], row[3]);
-				get_hash(msg, hash);
-				CHECK(memcmp(hash, row[0], 64) == 0);
+				sprintf(msg, "%s%s%s%s", row[1], row[2], row[3], row[6]);
+				if(memcmp(row[7], "1", 1) != 0){
+					get_hash(msg, hash);
+					CHECK(memcmp(hash, row[0], 64) == 0);
+				}else{
+					printf("\n\n\n\n\n\n\n\n\n\n");
+					//get the deletion response transaction
+					//char *del_req_message = (char *)malloc(120);
+					sprintf(sql, "select tx_hash from transaction where message like '%%deletion request@%s%%'", row[0]);
+					select_sql(sql, &del_response);
+					printf("%s\n", sql);
+					del_resp_message = mysql_fetch_row(del_response);
+					
+					// sprintf(del_resp_tx_msg, "%s", del_resp_message[0]);
+					// char *p;
+					// p = strchr(del_resp_tx_msg, '@');
+					// printf("-.200%s\n", p);
+					// p++;
+					sprintf(sql, "select message from transaction where message like '%%deletion response@%s%%'", del_resp_message[0]);
+					select_sql(sql, &del_response);
+					printf("%s\n", sql);
+					del_resp_message = mysql_fetch_row(del_response);
+					
+					sprintf(del_resp_tx_msg, "%s", del_resp_message[0]);
+					//char *p;
+					p = strchr(del_resp_tx_msg, '@');
+					
+					p = strchr(++p, '@');
+					++p;
+					//printf("-.200%s\n", p);
+					//deletion response@txid@(vrf msgs)
+					//						 |->now p is pointing here	
+					secp256k1_pubkey pubkey;
+					secp256k1_context *ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN | SECP256K1_CONTEXT_VERIFY);
+					size_t pklen = 33;
+					unsigned char vrf_pk[33];
+					unsigned char vrf_proof[81];
+					unsigned char vrf_output[32];
+					unsigned char seckey[32];
+
+					char hex_pk[67];
+					char hex_proof[163];
+					char hex_output[65];
+
+					int vrf_count = 667;
+					char *sql_pks = (char *)malloc(667*76);
+					sprintf(sql_pks, "select count(*) from stakeholder where pk in (");
+					//pks[0] = '\0';
+					while(vrf_count--){
+						sscanf(p, "%[^,], %[^,], %[^,]", hex_output, hex_proof, hex_pk);
+						from_hex(hex_output, 64, vrf_output);
+						from_hex(hex_proof, 162, vrf_proof);
+						from_hex(hex_pk, 66, vrf_pk);
+						CHECK(secp256k1_vrf_verify(vrf_output, vrf_proof, vrf_pk, row[0], 64) == 1);
+						sprintf(sql_pks, "%s\"%s\",", sql_pks, hex_pk);
+						p = strchr(p, ',');
+						p++;
+						//printf("-.200%s\n", p);
+						p = strchr(p, ',');
+						p++;
+						p = strchr(p, ',');
+						p++;
+					}
+					sql_pks[strlen(sql_pks)-1] = ')';
+					printf("check vrf_pks is in stakeholder list\n");
+					select_sql(sql_pks, &del_response);//reuse the variable del_response
+					del_resp_message = mysql_fetch_row(del_response);
+					CHECK(memcmp(del_resp_message[0], "667", 3) == 0);
+					mysql_free_result(del_response);
+					free(sql_pks);
+					memcpy(hash, row[0], 64);
+
+				}
 				if(strlen(row[1]) == 66){
 					from_hex(row[1], 66, pk);
 				}else{
@@ -392,6 +469,9 @@ int validate_blockchain(){
 	free(sql);
 	free(tx_bak);
 	mysql_free_result(res_blocks);
+	mysql_free_result(res_prev_block);
+	mysql_free_result(res);
+
 	printf("validation success\n");
 
 }
@@ -428,28 +508,34 @@ void generate_utxo(){
 	
 	int value;
 
-	char *msg = (char *)malloc(66+66+5);
+	char *msg = (char *)malloc(66+66+5+64);
 	unsigned char msg_hash[32];
 	char hex_hash[65];
 	char hex_sig[129];
 	MYSQL_RES *res_pk;
 	int has_spent = 0;
 	int utxo_count = 0;
-	sprintf(sql, "insert into transaction (tx_hash, ref_hash, receiver_pk, value, sig, has_spent) values ");
+	sprintf(sql, "insert into transaction (tx_hash, ref_hash, receiver_pk, value, sig, has_spent, message, is_deleted) values ");
 	MYSQL_ROW row_pk; 
 	int i = 100;
+
+	char *tx_hex_message = (char *)malloc(65);
+	unsigned char tx_message[32];
+
 	clock_t start, finish;
 	start = clock();
 	for(select_sql("select pk from stakeholder", &res_pk);row_pk = mysql_fetch_row(res_pk) && i--;){
 		row_pk = mysql_fetch_row(res_pk);
 		do{
+			secp256k1_rand256(tx_message);
+			byteToHexStr(tx_message, 32, tx_hex_message);
 			value = secp256k1_rand_int(MAX_TRANSFER_VALUE);
 			//concatenate ref_hash | row_pk[0] | value and hash it 
-			sprintf(msg, "%s%s%d", ref_hash, row_pk[0], value);
+			sprintf(msg, "%s%s%d%s", ref_hash, row_pk[0], value, tx_hex_message);
 			get_hash(msg, hex_hash);
 			from_hex(hex_hash, 64, msg_hash);
 			sign(msg_hash, hex_sig, seckey);
-			sprintf(sql, "%s(\"%s\", \"%s\", \"%s\", %d, \"%s\", %d), ", sql, hex_hash, ref_hash, row_pk[0], value, hex_sig, has_spent);
+			sprintf(sql, "%s(\"%s\", \"%s\", \"%s\", %d, \"%s\", %d, \"%s\", 0), ", sql, hex_hash, ref_hash, row_pk[0], value, hex_sig, has_spent, tx_hex_message);
 		}while(9 > utxo_count++);
 		utxo_count = 0;
 	}
@@ -463,23 +549,46 @@ void generate_utxo(){
 	free(msg);
 }
 
-/*
-	*@brief: generate 10 tx, insert them into the tx table
-	*@params: string tx, when function ends, the value of tx will be 10 tx hash, splitted by ","
-*/
-void generate_tx(char *tx){
-	char *sql = (char *)malloc(10240);
-	MYSQL_RES *res_tx;
-	MYSQL_RES *res_pk;
-	MYSQL_ROW row_tx;
+/*in response tx, */
+int generate_tx_del_response(char *tx){
+
+	char *sql = (char *)malloc(228114);
+
+	MYSQL_RES *res;
+	MYSQL_ROW del_req_tx;
+
+	sprintf(sql, "select message, tx_hash from transaction where is_deleted = 4 and message like '%%deletion request@%%' order by rand() limit 1, 1");
+	select_sql(sql, &res);
+	if(mysql_num_rows(res) == 0){
+		free(sql);
+		return 0;
+	}
+	//sprintf(sql, "update transaction set message = concat('@', message)")
+	char *hex_del_resp_message = (char *)malloc(667*(64+66+162+50));
+	del_req_tx = mysql_fetch_row(res);
+	
+	sprintf(hex_del_resp_message, "deletion response@%s@", del_req_tx[1]);
+	
+	char *del_req_message = (char *)malloc(120);
+	sprintf(del_req_message, "%s", del_req_tx[0]);
+	char *p = strchr(del_req_message, '@');
+	p++;
+	char del_tx_id[65];
+	sprintf(del_tx_id, "%s", p);
+	
+	//spends a tx
+	sprintf(sql, "select * from transaction where has_spent <> 1 order by rand() limit 1, 1");
+	select_sql(sql, &res);
+	MYSQL_ROW tx2be_spent = mysql_fetch_row(res);
+	sprintf(tx, "%s", tx2be_spent[0]);
+	//to get a receiver 
+	//MYSQL_RES *res;
 	MYSQL_ROW row_pk;
+	sprintf(sql, "select pk from stakeholder order by rand() limit 1, 1");
+	select_sql(sql, &res);
+	row_pk = mysql_fetch_row(res);
 
-	sprintf(sql, "select * from transaction where has_spent <> 1 order by rand() limit 1, 10");
-	select_sql(sql, &res_tx);
-	sprintf(sql, "select pk from stakeholder order by rand() limit 1, 10");
-	select_sql(sql, &res_pk);
-
-	char *msg = (char *)malloc(66+66+5);
+	char *msg = (char *)malloc(228114);
 	unsigned char msg_hash[32];
 	char hex_hash[65];
 	char hex_sig[129];
@@ -487,16 +596,192 @@ void generate_tx(char *tx){
 	char sk[65];
 	char hex_pk[67];
 	int has_spent = 0;
+
+	//sprintf(sql, "insert into transaction values ");
+	
+	sprintf(sql, "select pk, sk from stakeholder order by rand() limit 1, 667");
+	select_sql(sql, &res);
+	secp256k1_pubkey pubkey;
+	secp256k1_context *ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN | SECP256K1_CONTEXT_VERIFY);
+	size_t pklen = 33;
+	unsigned char vrf_pk[33];
+	unsigned char vrf_proof[81];
+	unsigned char vrf_output[32];
+	//unsigned char seckey[32];
+
+	//char hex_pk[67];
+	char hex_proof[163];
+	char hex_output[65];
+	MYSQL_ROW row;
+	while(row = mysql_fetch_row(res)){
+		//sprintf(hex_vrf_pk, "%s", row[0]);
+		from_hex(row[0], 66, vrf_pk);
+		from_hex(row[1], 64, seckey);
+		CHECK(secp256k1_ec_pubkey_parse(ctx, &pubkey, vrf_pk, pklen) == 1);
+		CHECK(secp256k1_vrf_prove(vrf_proof, seckey, &pubkey, del_tx_id, 64) == 1);
+		CHECK(secp256k1_vrf_proof_to_hash(vrf_output, vrf_proof) == 1);
+		//verify
+		CHECK(secp256k1_vrf_verify(vrf_output, vrf_proof, vrf_pk, del_tx_id, 64) == 1);
+
+		byteToHexStr(vrf_output, 32, hex_output);
+		byteToHexStr(vrf_proof, 81, hex_proof);
+		sprintf(hex_del_resp_message, "%s%s,%s,%s,", hex_del_resp_message, hex_output, hex_proof, row[0]);	
+	}
+
+	sprintf(msg, "%s%s%s%s", tx2be_spent[0]/*curr tx's ref_hash*/, row_pk[0], tx2be_spent[3], hex_del_resp_message);
+	get_hash(msg, hex_hash);
+	
+	get_tx_pk(tx2be_spent[0], hex_pk);//ref_tx
+	get_stkhld_sk(hex_pk, sk);
+	from_hex(sk, 64, seckey);
+	from_hex(hex_hash, 64, msg_hash);
+	sign(msg_hash, hex_sig, seckey);
+
+	sprintf(sql, "insert into transaction values (\"%s\", \"%s\", \"%s\", %s, \"%s\", %d, \"%s\", 3) ", 
+		hex_hash, tx2be_spent[0], row_pk[0], tx2be_spent[3], hex_sig, has_spent, hex_del_resp_message);
+	mysql_free_result(res);
+	printf("inseting a new tx into tx table: deletion response\n");
+	insert_sql(sql);
+	
+	sprintf(sql, "update transaction set has_spent = 1 where tx_hash = \"%s\"", tx);
+	printf("mark which tx output has been spent\n");
+	insert_sql(sql);
+	
+	sprintf(sql, "update transaction set is_deleted = 1 where tx_hash = \"%s\"", del_tx_id);
+	printf("response: tx deleted, update the is_deleted field in tx table\n");
+	insert_sql(sql);
+
+	sprintf(sql, "update transaction set is_deleted = 5 where tx_hash = \"%s\"", del_req_tx[1]);
+	printf("the deletion request is responsed, mark it\n");
+	insert_sql(sql);
+
+	printf("%s\n", tx);
+	sprintf(tx, "\"%s\",", tx2be_spent[0]);
+	printf("%s\n", tx);
+	free(sql);
+	free(msg);
+	free(hex_del_resp_message);
+	free(del_req_message);
+	return 1;
+}
+
+int generate_tx_del_request(char *tx){
+	// int threshold = 400000000;
+	// if(secp256k1_rand_int(2000000000) > threshold){
+	// 	return 0;
+	// }
+	printf("\ngenerate a deletion request tx:\n\n");
+	char *sql = (char *)malloc(10240);
+
+	MYSQL_RES *res;
+	MYSQL_ROW del_tx;
+
+	sprintf(sql, "select tx_hash from transaction where is_deleted = 0 order by rand() limit 1, 1");
+	select_sql(sql, &res);
+	if(mysql_num_rows(res) == 0){
+		free(sql);
+		return 0;
+	}
+	char *hex_del_req_message = (char *)malloc(120);
+	del_tx = mysql_fetch_row(res);
+	
+	sprintf(hex_del_req_message, "deletion request@%s", del_tx[0]);
+	
+	//spends a tx
+	sprintf(sql, "select * from transaction where has_spent <> 1 order by rand() limit 1, 1");
+	select_sql(sql, &res);
+	MYSQL_ROW tx2be_spent = mysql_fetch_row(res);
+	sprintf(tx, "%s\"%s\",",tx, tx2be_spent[0]);
+
+	sprintf(sql, "update transaction set has_spent = 1 where tx_hash = \"%s\"", tx2be_spent[0]);
+	printf("spends a tx in del request\n");
+	insert_sql(sql);
+	//to get a receiver 
+	//MYSQL_RES *res;
+	MYSQL_ROW row_pk;
+	sprintf(sql, "select pk from stakeholder order by rand() limit 1, 1");
+	select_sql(sql, &res);
+	row_pk = mysql_fetch_row(res);
+
+	char *msg = (char *)malloc(66+66+5+120);
+	unsigned char msg_hash[32];
+	char hex_hash[65];
+	char hex_sig[129];
+	unsigned char seckey[32];
+	char sk[65];
+	char hex_pk[67];
+	int has_spent = 0;
+
+	sprintf(msg, "%s%s%s%s", tx2be_spent[0]/*curr tx's ref_hash*/, row_pk[0], tx2be_spent[3], hex_del_req_message);
+	get_hash(msg, hex_hash);
+	
+	get_tx_pk(tx2be_spent[0], hex_pk);//ref_tx
+	get_stkhld_sk(hex_pk, sk);
+	from_hex(sk, 64, seckey);
+	from_hex(hex_hash, 64, msg_hash);
+	sign(msg_hash, hex_sig, seckey);
+
+	sprintf(sql, "insert into transaction values (\"%s\", \"%s\", \"%s\", %s, \"%s\", %d, \"%s\", 4) ", 
+		hex_hash, tx2be_spent[0], row_pk[0], tx2be_spent[3], hex_sig, has_spent, hex_del_req_message);
+	mysql_free_result(res);
+	printf("inseting a new tx into tx table: deletion request\n");
+	insert_sql(sql);
+	
+	sprintf(sql, "update transaction set is_deleted = 2 where tx_hash = \"%s\"", del_tx[0]);
+	printf("tx request to be deleted, update the is_deleted field in tx table\n");
+	insert_sql(sql);
+
+	free(sql);
+	free(msg);
+	free(hex_del_req_message);
+	return 1;
+
+}
+
+/*
+	*@brief: generate 10 tx, insert them into the tx table
+	*@params: string tx, when function ends, the value of tx will be 10 tx hash, splitted by ","
+*/
+
+/*
+	how 2 modify this function 2 adapt 2 the new demand 4 this prj,
+	first we will generate 
+*/
+void generate_tx(char *tx, int tx_num){
+	char *sql = (char *)malloc(10240);
+	MYSQL_RES *res_tx;
+	MYSQL_RES *res_pk;
+	MYSQL_ROW row_tx;
+	MYSQL_ROW row_pk;
+
+	sprintf(sql, "select * from transaction where has_spent <> 1 order by rand() limit 1, %d", tx_num);
+	select_sql(sql, &res_tx);
+	sprintf(sql, "select pk from stakeholder order by rand() limit 1, %d", tx_num);
+	select_sql(sql, &res_pk);
+
+	char *msg = (char *)malloc(66+66+5+65);
+	unsigned char msg_hash[32];
+	char hex_hash[65];
+	char hex_sig[129];
+	unsigned char seckey[32];
+	char sk[65];
+	char hex_pk[67];
+	int has_spent = 0;
+
+	char *tx_hex_message = (char *)malloc(65);
+	unsigned char tx_message[32];
 	
 	sql[0] = '\0';
-	sprintf(sql, "insert into transaction (tx_hash, ref_hash, receiver_pk, value, sig, has_spent) values ");
-	tx[0] = '\0';
-	for(int i=0; i < 10; i++){
+	sprintf(sql, "insert into transaction values ");
+	//tx[0] = '\0';
+	for(int i=0; i < tx_num; i++){
 		row_tx = mysql_fetch_row(res_tx);//this is the ref_tx
 		row_pk = mysql_fetch_row(res_pk);
 		/*需要更新has_spent字段，　*/
 		sprintf(tx, "%s\"%s\", ", tx, row_tx[0]);
-		sprintf(msg, "%s%s%s", row_tx[0]/*curr tx's ref_hash*/, row_pk[0], row_tx[3]);
+		secp256k1_rand256(tx_message);
+		byteToHexStr(tx_message, 32, tx_hex_message);
+		sprintf(msg, "%s%s%s%s", row_tx[0]/*curr tx's ref_hash*/, row_pk[0], row_tx[3], tx_hex_message);
 		get_hash(msg, hex_hash);
 		
 		get_tx_pk(row_tx[0], hex_pk);//ref_tx
@@ -505,19 +790,20 @@ void generate_tx(char *tx){
 		from_hex(hex_hash, 64, msg_hash);
 		sign(msg_hash, hex_sig, seckey);
 
-		sprintf(sql, "%s(\"%s\", \"%s\", \"%s\", %s, \"%s\", %d), ", 
-			sql, hex_hash, row_tx[0], row_pk[0], row_tx[3], hex_sig, has_spent);
+		
+		sprintf(sql, "%s(\"%s\", \"%s\", \"%s\", %s, \"%s\", %d, \"%s\", 0), ", 
+			sql, hex_hash, row_tx[0], row_pk[0], row_tx[3], hex_sig, has_spent, tx_hex_message);
 
 	}
 
 	mysql_free_result(res_tx);
 	mysql_free_result(res_pk);
 	sql[strlen(sql)-2] = '\0';
-	printf("inseting 10 new tx into tx table\n");
+	printf("inseting %d new tx into tx table\n", tx_num);
 	insert_sql(sql);
 	tx[strlen(tx)-2] = '\0';
 	sprintf(sql, "update transaction set has_spent = 1 where tx_hash in (%s)", tx);
-	printf("mark which 10 tx output has been spent\n");
+	printf("mark which %d tx output has been spent\n", tx_num);
 	insert_sql(sql);
 	free(sql);
 	free(msg);
@@ -577,7 +863,7 @@ int main(){
 
 	int start, finish, start_time, finish_time;
 	start_time = time(NULL);
-	for(int i=1; i<10; i++){
+	for(int i=108; i<150; i++){
 		//printf("%dth slot leader_election\n", i);
 		
 		start = time(NULL);

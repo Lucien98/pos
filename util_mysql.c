@@ -27,7 +27,7 @@ void insert_sql(char *sql){
 	
 	conn = mysql_real_connect(conn, HOST, USERNAME, PASSWORD, DATABASE, 0, NULL, 0);
 	if(!conn){
-		printf("insert_sql: Connection failed\n");
+		printf("insert_sql: Connection failed\n%s\n", mysql_error(conn));
 		exit(1);
 	}
 	int res;
@@ -40,6 +40,7 @@ void insert_sql(char *sql){
 	}else{
 		my_ulonglong affected_row = mysql_affected_rows(conn);
 		printf("%d rows affected.\n", (int)affected_row);
+		mysql_close(conn);
 	}
 }
 
@@ -50,7 +51,7 @@ void select_sql(char *sql, MYSQL_RES **res_ptr){
 
 	conn = mysql_real_connect(conn, HOST, USERNAME, PASSWORD, DATABASE, 0, NULL, 0);
 	if(!conn){
-		printf("query_sql: Connection failed\n");
+		printf("query_sql: Connection failed\n%s\n", mysql_error(conn));
 		exit(1);
 	}
 	
@@ -71,7 +72,8 @@ void get_stkhld_sk(char *pk, char *sk){
 	MYSQL *conn = mysql_init(NULL);
 	conn = mysql_real_connect(conn, HOST, USERNAME, PASSWORD, DATABASE, 0, NULL, 0);
 	if(!conn) {
-		printf("get_stkhld_sk:Connection failed\n");
+		printf("get_stkhld_sk:Connection failed\n%s\n", mysql_error(conn));
+		getchar();
 		exit(1);
 	}
 	char *sql = (char *)malloc(200);
@@ -95,7 +97,7 @@ void get_tx_pk(char *tx_hash, char *pk){
 	MYSQL *conn = mysql_init(NULL);
 	conn = mysql_real_connect(conn, HOST, USERNAME, PASSWORD, DATABASE, 0, NULL, 0);
 	if(!conn){ 
-		printf("get_tx_pk:Connection success\n");
+		printf("get_tx_pk:Connection success\n%s\n", mysql_error(conn));
 		exit(1);
 	}
 	char *sql = (char *)malloc(200);
