@@ -17,6 +17,13 @@ sudo ./pos
 #include "util_pos.h"
 #include "util_mysql.h"
 
+
+#define HOST "127.0.0.1"
+#define USERNAME "root"
+#define PASSWORD ""
+#define DATABASE "pos"
+
+
 #define NUM_STKHLD 5000
 
 #define MERKLE_ROOT_LEN 64 
@@ -26,7 +33,7 @@ sudo ./pos
 #define DIFFICULTY "0D1B71758E2196800000000000000000000000000000000000000000000000" 
 #define MAX_TRANSFER_VALUE 1000
 FILE *fp;
-
+MYSQL *conn;
 void generate_stakeholder(void){
 	secp256k1_context  *ctx;
 	unsigned char seckey[32];
@@ -1185,6 +1192,14 @@ int main(int argc, char **argv){
 		printf("need 2 params. 1:file name num, 2:INTERVAL\n");
 		exit(1);
 	}
+	conn = mysql_init(NULL);
+
+	conn = mysql_real_connect(conn, HOST, USERNAME, PASSWORD, DATABASE, 0, NULL, 0);
+	if(!conn){
+		printf("insert_sql: Connection failed\n%s\n", mysql_error(conn));
+		exit(1);
+	}
+
 	int start, finish, start_time, finish_time;
 	insert_sql("update stxo set stxo = '()'");
 	start_time = time(NULL);
@@ -1193,7 +1208,7 @@ int main(int argc, char **argv){
 	INTERVAL = atoi(argv[2]);
 	fp = fopen(file_name, "a+");
 	fprintf(fp, "slot,validate time,is_edited\n");
-	for(int i=757; i<2500; i++){
+	for(int i=1; i<700; i++){
 		//printf("%dth slot leader_election\n", i);
 		
 		start = time(NULL);
@@ -1206,7 +1221,7 @@ int main(int argc, char **argv){
 	fclose(fp);
 	finish_time = time(NULL);
 	printf("total time:%d\n",(finish_time - start_time));
-	
+	mysql_close(conn);
 	return 0;
 
 }
