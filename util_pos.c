@@ -105,11 +105,11 @@ void sign(unsigned char message[32], char hex_signature[149], unsigned char sk[3
 	CHECK(secp256k1_ecdsa_signature_parse_der(ctx, &signature, sig, siglen) == 1);
     CHECK(secp256k1_ecdsa_verify(ctx, &signature, message, &pubkey) == 1);*/
 }
-
+#define TX_NUM 100
 void get_merkle_root(char *field_tx, char *output){
 	mt_t *mt;
-	uint8_t tx[10][32];
-	char hex_tx[10][65];
+	uint8_t tx[TX_NUM][32];
+	char hex_tx[TX_NUM][65];
 	mt_hash_t root;
 	char *p;
 	
@@ -120,17 +120,17 @@ void get_merkle_root(char *field_tx, char *output){
 	p = strtok(field_tx, delim);
 	memcpy(hex_tx[0], p, 64);
 	int i = 0;
-	while(i < 9)
+	while(i < TX_NUM-1)
 	{
 		p = strtok(NULL, delim);
 		memcpy(hex_tx[++i], p, 64);
 	}
-	i = 10;
+	i = TX_NUM;
 	while(i--){
-		from_hex(hex_tx[9-i], 64, tx[9-i]);
+		from_hex(hex_tx[TX_NUM-1-i], 64, tx[TX_NUM-1-i]);
 	}
 
-	for(i=0; i < 10; i++){
+	for(i=0; i < TX_NUM; i++){
 		CHECK(mt_add(mt, tx[i], 32) == MT_SUCCESS);
 	}
 

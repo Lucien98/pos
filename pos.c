@@ -28,10 +28,11 @@ sudo ./pos
 
 #define MERKLE_ROOT_LEN 64 
 #define SIGNATURE_LEN 
-#define TX_LEN 750
 #define NONCE "A6E3C57DD01ABE90086538398355DD4C3B17AA873382B0F24D6129493D8AAD60"
 #define DIFFICULTY "0D1B71758E2196800000000000000000000000000000000000000000000000" 
 #define MAX_TRANSFER_VALUE 1000
+#define TX_NUM 100
+#define TX_LEN 75*TX_NUM
 FILE *fp;
 MYSQL *conn;
 void generate_stakeholder(void){
@@ -75,7 +76,7 @@ void insert_block(int height, unsigned char prevhash[], unsigned char vrf_pk[], 
 	zero_pk[66] = '\0';
 	
 	if(memcmp(vrf_pk, zero_pk, 66) != 0){
-		char *tx_bak = (char *)malloc(750);
+		char *tx_bak = (char *)malloc(75*TX_NUM);
 		memcpy(tx_bak, tx, strlen(tx));
 		get_merkle_root(tx_bak, merkle_root);
 	}
@@ -184,14 +185,14 @@ void leader_election(int slot){
 				byteToHexStr(proof, 81, hex_proof);
 				
 				printf("generating tx\n");
-				char *tx = (char *)malloc(750);
+				char *tx = (char *)malloc(75*TX_NUM);
 				tx[0] = '\0';
 				interval_count = (interval_count + 1) % INTERVAL;
 				del_response = generate_tx_del_response(tx);
 				if(interval_count == 0) del_request = generate_tx_del_request(tx);
 				else del_request = 0;
 				
-				generate_tx(tx, 10 - del_request - del_response);
+				generate_tx(tx, TX_NUM - del_request - del_response);
 				
 				int height = slot;
 				printf("generating a block \n");				
@@ -230,7 +231,7 @@ int validate_blockchain(){
 	secp256k1_context *ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN | SECP256K1_CONTEXT_VERIFY);
 
 	insert_sql("update stxo set stxo = '()'");
-	char *sql = (char *)malloc(1000);
+	char *sql = (char *)malloc(1000*TX_NUM/10);
 	sprintf(sql, "select * from block order by height");
 	MYSQL_RES *res_blocks;
 
@@ -274,10 +275,10 @@ int validate_blockchain(){
 	MYSQL_RES *del_response;
 	MYSQL_ROW del_resp_message;
 	MYSQL_ROW row;
-	char *tx_bak = (char *)malloc(750);
+	char *tx_bak = (char *)malloc(75*TX_NUM);
 	char root[65];
 	char hex_pk[67];
-	char hex_tx[10][65];
+	char hex_tx[TX_NUM][65];
 	char *delim = "\", ()";
 	char *p;
 	int j;
@@ -462,12 +463,12 @@ int validate_blockchain(){
 			j = 0;
 			while(p = strtok(NULL, delim))
 				memcpy(hex_tx[++j], p, 64);
-			qsort(hex_tx, 10, sizeof(char)*65, compare);
-			for(j=0; j < 9; j++){
+			qsort(hex_tx, TX_NUM, sizeof(char)*65, compare);
+			for(j=0; j < TX_NUM-1; j++){
 				CHECK(memcmp(hex_tx[j], hex_tx[j+1], 64) != 0);
 			}
 			sprintf(sql, "select count(stxo) from stxo where stxo like '%%%-.64s%%'", hex_tx[0]);
-			for(j=1; j<10; sprintf(sql, "%s or stxo like '%%%-.64s%%'", sql, hex_tx[j++]));
+			for(j=1; j<TX_NUM; sprintf(sql, "%s or stxo like '%%%-.64s%%'", sql, hex_tx[j++]));
 			select_sql(sql, &res);
 			row = mysql_fetch_row(res);
 			CHECK(memcmp(row[0], "0", 1) == 0);
@@ -771,7 +772,7 @@ int generate_tx_del_request(char *tx){
 	first we will generate 
 */
 void generate_tx(char *tx, int tx_num){
-	char *sql = (char *)malloc(10240);
+	char *sql = (char *)malloc(10240*TX_NUM/10);
 	MYSQL_RES *res_tx;
 	MYSQL_RES *res_pk;
 	MYSQL_ROW row_tx;
@@ -779,6 +780,12 @@ void generate_tx(char *tx, int tx_num){
 
 	sprintf(sql, "select * from transaction where has_spent <> 1 order by rand() limit 1, %d", tx_num);
 	select_sql(sql, &res_tx);
+
+	int rows = mysql_num_rows(res_tx);
+	printf("%d\n", rows);
+	//mysql_free_result(res_tx);
+	//exit(1);
+
 	sprintf(sql, "select pk from stakeholder order by rand() limit 1, %d", tx_num);
 	select_sql(sql, &res_pk);
 
@@ -794,7 +801,7 @@ void generate_tx(char *tx, int tx_num){
 	char *tx_hex_message = (char *)malloc(65);
 	unsigned char tx_message[32];
 	
-	char tx_update[750];
+	char tx_update[75*TX_NUM];
 	tx_update[0] = '\0';
 
 	sql[0] = '\0';
@@ -824,6 +831,7 @@ void generate_tx(char *tx, int tx_num){
 
 	}
 
+	//if(res_tx == NULL) exit(1);
 	mysql_free_result(res_tx);
 	mysql_free_result(res_pk);
 	sql[strlen(sql)-2] = '\0';
@@ -895,7 +903,7 @@ void validate_single_block(int slot){
 	mysql_free_result(res);
 */
 
-	char *sql = (char *)malloc(1000);
+	char *sql = (char *)malloc(1000*TX_NUM/10);
 	sprintf(sql, "select * from block where height = %d", slot);
 	MYSQL_RES *res_blocks;
 	MYSQL_ROW row;
@@ -955,10 +963,10 @@ void validate_single_block(int slot){
 	MYSQL_RES *del_response;
 	MYSQL_ROW del_resp_message;
 	//MYSQL_ROW row;
-	char *tx_bak = (char *)malloc(750);
+	char *tx_bak = (char *)malloc(75*TX_NUM);
 	char root[65];
 	char hex_pk[67];
-	char hex_tx[10][65];
+	char hex_tx[TX_NUM][65];
 	char *delim = "\", ()";
 	char *p;
 	int j;
@@ -1145,12 +1153,12 @@ void validate_single_block(int slot){
 			j = 0;
 			while(p = strtok(NULL, delim))
 				memcpy(hex_tx[++j], p, 64);
-			qsort(hex_tx, 10, sizeof(char)*65, compare);
-			for(j=0; j < 9; j++){
+			qsort(hex_tx, TX_NUM, sizeof(char)*65, compare);
+			for(j=0; j < TX_NUM-1; j++){
 				CHECK(memcmp(hex_tx[j], hex_tx[j+1], 64) != 0);
 			}
 			sprintf(sql, "select count(stxo) from stxo where stxo like '%%%-.64s%%'", hex_tx[0]);
-			for(j=1; j<10; sprintf(sql, "%s or stxo like '%%%-.64s%%'", sql, hex_tx[j++]));
+			for(j=1; j<TX_NUM; sprintf(sql, "%s or stxo like '%%%-.64s%%'", sql, hex_tx[j++]));
 			select_sql(sql, &res);
 			row = mysql_fetch_row(res);
 			CHECK(memcmp(row[0], "0", 1) == 0);
